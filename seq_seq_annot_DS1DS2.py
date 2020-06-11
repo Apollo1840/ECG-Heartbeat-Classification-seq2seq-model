@@ -12,6 +12,8 @@ from imblearn.over_sampling import SMOTE
 from sklearn.model_selection import train_test_split
 import argparse
 
+from model import birnn
+
 random.seed(654)
 
 DATA_DIR = 'data/s2s_mitbih_aami_DS1DS2'
