@@ -135,6 +135,63 @@ def demonstrate_sample(y_train, y_test, num2charY):
         print(''.join([num2charY[y_] for y_ in list(y_test[ii + 5])]))
 
 
+def numerize_y(y_train, y_test, char2numY):
+    y_train = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_train]
+    y_test = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_test]
+    y_test = np.asarray(y_test)
+    y_train = np.asarray(y_train)
+    return y_train, y_test
+
+
+def oversampling(X_train, y_train, n_oversampling, char2numY):
+    max_time = X_train.shape[1]
+    input_dim = X_train.shape[2]
+
+    X_train = np.reshape(X_train, [X_train.shape[0] * X_train.shape[1], -1])
+    y_train = y_train[:, 1:].flatten()  # removed <GO>
+
+    nums_in_classes = []
+    classes = np.unique(y_train)
+    for cl in classes:
+        ind = np.where(classes == cl)[0][0]
+        nums_in_classes.append(len(np.where(y_train.flatten() == ind)[0]))
+
+    # ratio={0:nums[0],1:nums[0],2:nums[0]}
+    # ratio={0:7000,1:nums[1],2:7000,3:7000}
+    ratio = {0: nums_in_classes[0], 1: n_oversampling + 1000, 2: n_oversampling}
+
+    sm = SMOTE(random_state=12, sampling_strategy=ratio)
+    X_train, y_train = sm.fit_sample(X_train, y_train)
+
+    X_train = X_train[:(X_train.shape[0] // max_time) * max_time, :]
+    y_train = y_train[:(X_train.shape[0] // max_time) * max_time]
+
+    X_train = np.reshape(X_train, [-1, max_time, input_dim])
+    y_train = np.reshape(y_train, [-1, max_time, ])
+    y_train = [[char2numY['<GO>']] + [y_ for y_ in date] for date in y_train]
+    y_train = np.array(y_train)
+
+    return X_train, y_train
+
+
+def normalize(data):
+    data = np.nan_to_num(data)  # removing NaNs and Infs
+    data = data - np.mean(data)
+    data = data / np.std(data)
+    return data
+
+
+def batch_data(x, y, batch_size):
+    shuffle = np.random.permutation(len(x))
+    start = 0
+    #     from IPython.core.debugger import Tracer; Tracer()()
+    x = x[shuffle]
+    y = y[shuffle]
+    while start + batch_size <= len(x):
+        yield x[start:start + batch_size], y[start:start + batch_size]
+        start += batch_size
+
+
 def evaluate_metrics(confusion_matrix):
     # https://stackoverflow.com/questions/31324218/scikit-learn-how-to-obtain-true-positive-true-negative-false-positive-and-fal
     # Sensitivity, hit rate, recall, or true positive rate
@@ -163,98 +220,6 @@ def evaluate_metrics(confusion_matrix):
         ACC)  # to get a sense of effectiveness of our method on the small classes we computed this average (macro-average)
 
     return ACC_macro, ACC, TPR, TNR, PPV
-
-
-def batch_data(x, y, batch_size):
-    shuffle = np.random.permutation(len(x))
-    start = 0
-    #     from IPython.core.debugger import Tracer; Tracer()()
-    x = x[shuffle]
-    y = y[shuffle]
-    while start + batch_size <= len(x):
-        yield x[start:start + batch_size], y[start:start + batch_size]
-        start += batch_size
-
-
-def birnn(inputs, dec_inputs, output_dim, n_channels=10, input_depth=280, num_units=128, max_time=10,
-          bidirectional=False):
-    _inputs = tf.reshape(inputs, [-1, n_channels, input_depth // n_channels])
-    # _inputs = tf.reshape(inputs, [-1,input_depth,n_channels])
-
-    # #(batch*max_time, 280, 1) --> (N, 280, 18)
-    conv1 = tf.layers.conv1d(inputs=_inputs, filters=32, kernel_size=2, strides=1,
-                             padding='same', activation=tf.nn.relu)
-    max_pool_1 = tf.layers.max_pooling1d(inputs=conv1, pool_size=2, strides=2, padding='same')
-
-    conv2 = tf.layers.conv1d(inputs=max_pool_1, filters=64, kernel_size=2, strides=1,
-                             padding='same', activation=tf.nn.relu)
-    max_pool_2 = tf.layers.max_pooling1d(inputs=conv2, pool_size=2, strides=2, padding='same')
-
-    conv3 = tf.layers.conv1d(inputs=max_pool_2, filters=128, kernel_size=2, strides=1,
-                             padding='same', activation=tf.nn.relu)
-
-    shape = conv3.get_shape().as_list()
-    data_input_embed = tf.reshape(conv3, (-1, max_time, shape[1] * shape[2]))
-
-    # timesteps = max_time
-    #
-    # lstm_in = tf.unstack(data_input_embed, timesteps, 1)
-    # lstm_size = 128
-    # # Get lstm cell output
-    # # Add LSTM layers
-    # lstm_cell = tf.contrib.rnn.BasicLSTMCell(lstm_size)
-    # data_input_embed, states = tf.contrib.rnn.static_rnn(lstm_cell, lstm_in, dtype=tf.float32)
-    # data_input_embed = tf.stack(data_input_embed, 1)
-    # shape = data_input_embed.get_shape().as_list()
-
-    embed_size = 10  # 128 lstm_size # shape[1]*shape[2]
-
-    # Embedding layers
-    output_embedding = tf.Variable(tf.random_uniform((output_dim, embed_size), -1.0, 1.0), name='dec_embedding')
-    data_output_embed = tf.nn.embedding_lookup(output_embedding, dec_inputs)
-
-    with tf.variable_scope("encoding") as encoding_scope:
-        if not bidirectional:
-
-            # Regular approach with LSTM units
-            lstm_enc = tf.contrib.rnn.LSTMCell(num_units)
-            _, last_state = tf.nn.dynamic_rnn(lstm_enc, inputs=data_input_embed, dtype=tf.float32)
-
-        else:
-
-            # Using a bidirectional LSTM architecture instead
-            enc_fw_cell = tf.contrib.rnn.LSTMCell(num_units)
-            enc_bw_cell = tf.contrib.rnn.LSTMCell(num_units)
-
-            ((enc_fw_out, enc_bw_out), (enc_fw_final, enc_bw_final)) = tf.nn.bidirectional_dynamic_rnn(
-                cell_fw=enc_fw_cell,
-                cell_bw=enc_bw_cell,
-                inputs=data_input_embed,
-                dtype=tf.float32)
-            enc_fin_c = tf.concat((enc_fw_final.c, enc_bw_final.c), 1)
-            enc_fin_h = tf.concat((enc_fw_final.h, enc_bw_final.h), 1)
-            last_state = tf.contrib.rnn.LSTMStateTuple(c=enc_fin_c, h=enc_fin_h)
-
-    with tf.variable_scope("decoding") as decoding_scope:
-        if not bidirectional:
-            lstm_dec = tf.contrib.rnn.LSTMCell(num_units)
-        else:
-            lstm_dec = tf.contrib.rnn.LSTMCell(2 * num_units)
-
-        dec_outputs, _ = tf.nn.dynamic_rnn(lstm_dec, inputs=data_output_embed, initial_state=last_state)
-
-    logits = tf.layers.dense(dec_outputs, units=output_dim, use_bias=True)
-
-    return logits
-
-
-def str2bool(v):
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 def test_model(X_test, y_test, batch_size, char2numY,
@@ -303,52 +268,6 @@ def test_model(X_test, y_test, batch_size, char2numY,
     return acc_avg, acc, sensitivity, specificity, PPV
 
 
-def numerize_y(y_train, y_test, char2numY):
-    y_train = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_train]
-    y_test = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_test]
-    y_test = np.asarray(y_test)
-    y_train = np.asarray(y_train)
-    return y_train, y_test
-
-
-def oversampling(X_train, y_train, n_oversampling, char2numY):
-    max_time = X_train.shape[1]
-    input_dim = X_train.shape[2]
-
-    X_train = np.reshape(X_train, [X_train.shape[0] * X_train.shape[1], -1])
-    y_train = y_train[:, 1:].flatten()  # removed <GO>
-
-    nums_in_classes = []
-    classes = np.unique(y_train)
-    for cl in classes:
-        ind = np.where(classes == cl)[0][0]
-        nums_in_classes.append(len(np.where(y_train.flatten() == ind)[0]))
-
-    # ratio={0:nums[0],1:nums[0],2:nums[0]}
-    # ratio={0:7000,1:nums[1],2:7000,3:7000}
-    ratio = {0: nums_in_classes[0], 1: n_oversampling + 1000, 2: n_oversampling}
-
-    sm = SMOTE(random_state=12, sampling_strategy=ratio)
-    X_train, y_train = sm.fit_sample(X_train, y_train)
-
-    X_train = X_train[:(X_train.shape[0] // max_time) * max_time, :]
-    y_train = y_train[:(X_train.shape[0] // max_time) * max_time]
-
-    X_train = np.reshape(X_train, [-1, max_time, input_dim])
-    y_train = np.reshape(y_train, [-1, max_time, ])
-    y_train = [[char2numY['<GO>']] + [y_ for y_ in date] for date in y_train]
-    y_train = np.array(y_train)
-
-    return X_train, y_train
-
-
-def normalize(data):
-    data = np.nan_to_num(data)  # removing NaNs and Infs
-    data = data - np.mean(data)
-    data = data / np.std(data)
-    return data
-
-
 def run_program(args):
     """
     the actual main
@@ -370,6 +289,9 @@ def run_program(args):
     test_steps = args.test_steps
     classes = args.classes  # ['N', 'S','V']
     filename = args.data_dir
+
+    ####################################################################
+    # deal with data
 
     # read data
     print("reading data ...")
@@ -524,6 +446,15 @@ def run_program(args):
 
 
 def main():
+
+    def str2bool(v):
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--epochs', type=int, default=500)
