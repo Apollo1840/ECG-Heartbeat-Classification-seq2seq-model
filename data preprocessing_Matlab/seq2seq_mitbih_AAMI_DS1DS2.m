@@ -1,6 +1,7 @@
 clear all
 clc
 tic
+
 addr = '.\mitbihdb';
 Files=dir(strcat(addr,'\*.mat'));
 
@@ -50,7 +51,9 @@ for j=1:2
             % plot(t,ECGsignal)
             %
             
-            [pathstr,name,ext] = fileparts(strcat(num2str (DS(i)),'m'));
+            [pathstr,name,ext] = fileparts(strcat(num2str(DS(i)), 'm'));
+
+            % lead_id
             nsig = 1;
             
             [tm,ecgsig,ann,Fs,sizeEcgSig,timeEcgSig] = loadEcgSig([addr filesep name]);
@@ -93,9 +96,12 @@ for j=1:2
             % related to one segment
             
             annots_list = ['N','L','R','e','j','S','A','a','J','V','E','F','/','f','Q'];
-            
+
+            % ann(4): annotations with char
             annot  = cell2mat(ann(4));
-            indices  = ismember(rPeaks,peaks(:,4));
+
+            rpeaks = peaks(:,4)
+            indices  = ismember(rPeaks, rpeaks);
             annot = annot(indices);
             % rps = peaks(:,4);
             
@@ -105,13 +111,14 @@ for j=1:2
             % % V = V, E
             % % F = F
             % % Q = /, f, Q
-            
-            seg_values = {};
-            seg_labels =[];
-            
+
             ind_seg = 1;
+
             % normalize
             signal = normalize(signal);
+
+            seg_values = {};
+            seg_labels = [];
             for ind=1:length(annot)
                 if ~ismember(annot(ind),annots_list)
                     continue;
@@ -141,6 +148,7 @@ for j=1:2
                     throw("No label! :(")
                     
                 end
+
                 if ind==1
                     
                     seg_values{ind_seg} = signal(1:tpeaks(ind)-1)';
@@ -159,8 +167,9 @@ for j=1:2
                 
                 seg_labels(ind_seg) =  lebel;
                 ind_seg = ind_seg+1;
-                
             end
+
+
             if j==1
                 s2s_mitbih_DS1(i).seg_values = seg_values';
                 s2s_mitbih_DS1(i).seg_labels = char(seg_labels);

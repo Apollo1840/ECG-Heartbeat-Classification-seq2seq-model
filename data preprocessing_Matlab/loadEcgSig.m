@@ -22,10 +22,11 @@ function [tm,ecgsig,ann,Fs,sizeEcgSig,timeEcgSig] = loadEcgSig(Name)
 % loadEcgSignal.m           D. Kawasaki			15 June 2017
 % 		      Davi Kawasaki	       15 June 2017 version 1.0
 
-infoName = strcat(Name, '.info');
 matName = strcat(Name, '.mat');
 load(matName);
 ecgsig = val;
+
+infoName = strcat(Name, '.info');
 fid = fopen(infoName, 'rt');
 fgetl(fid);
 fgetl(fid);
@@ -40,16 +41,21 @@ for i = 1:size(ecgsig, 1)
 end
 
 fclose(fid);
+
+% ?
 ecgsig(ecgsig==-32768) = NaN;
 
+% normalize the given ECG signal to the range of between 0 and 1 ??
 for i = 1:size(ecgsig, 1)
     ecgsig(i, :) = (ecgsig(i, :) - base(i)) / gain(i);
 end
+
 N = size(ecgsig, 2);
 tm1 = 1/Fs:1/Fs:N/Fs;
 tm = (1:size(ecgsig, 2)) * interval;
+
 sizeEcgSig = size(ecgsig, 2);
-timeEcgSig = sizeEcgSig*interval;
+timeEcgSig = sizeEcgSig * interval;
 %plot(tm', val');
 
 %for i = 1:length(signal)
@@ -61,8 +67,8 @@ timeEcgSig = sizeEcgSig*interval;
 % grid on
 
 % load annotations
-
 annotationName = strcat(Name, '.txt');
+
 fid = fopen(annotationName, 'rt');
 % was annotationsEcg = textscan(fid, '%d:%f %d %*c %*d %*d %*d %s', 'HeaderLines', 1, 'CollectOutput', 1);
 ann = textscan(fid, '%d:%f %d %c %d %d %d %s', 'HeaderLines', 1, 'CollectOutput', 1);

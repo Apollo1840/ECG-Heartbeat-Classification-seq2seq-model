@@ -1,4 +1,4 @@
-function [ ind ] = onoffset( interval,mode )
+function [ ind ] = onoffset( interval, mode )
 %Function calculates on/off set of QRS complexe
 slope = [];
 for i = 2:length(interval)-1

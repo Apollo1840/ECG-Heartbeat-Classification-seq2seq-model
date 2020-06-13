@@ -1,11 +1,11 @@
 function [ECGpeaks] = QSpeaks( ECG,Rposition,fs )
-%Q,S peaks detection
+% Q,S peaks detection
 % point to point time duration is determined by sampling frequency: 1/fs
 % the duration of QRS complex varies from 0.1s to 0.2s 
 % complex--fs*0.2
 aveHB = length(ECG)/length(Rposition);
 fid_pks = zeros(length(Rposition),7);
-% P QRSon Q R S QRSoff 
+% P QRSon Q R S QRSoff T
 %% set up searching windows
 windowS = round(fs*0.1); windowQ = round(fs*0.05);
 windowP = round(aveHB/3); windowT = round(aveHB*2/3);
@@ -28,13 +28,16 @@ for i = 1:length(Rposition)
         [Sv,Sp] = min(ECG(thisR:thisR+windowS));
         thisS = Sp + thisR-1;
         fid_pks(i,5) = thisS;
+
         [Qv,Qp] = min(ECG(thisR-windowQ:thisR));
         thisQ = thisR-(windowQ+1) + Qp;
         fid_pks(i,3)=thisQ;      
+
         % onset and offset detection
         interval_q = ECG(thisQ-windowOF:thisQ);
         [ ind ] = onoffset(interval_q,'on' );
         thisON = thisQ - (windowOF+1) + ind;
+
         interval_s = ECG(thisS:thisS+windowOF);
         [ ind ] = onoffset( interval_s,'off' );
         thisOFF = thisS + ind-1;
@@ -63,6 +66,7 @@ for i = 2:length(Rposition)-1
        fid_pks(i,7) = thisOFF + thisT -1;
     end
 end
+
 ECGpeaks = [];
 Ind = zeros(length(Rposition),1);
 for i = 1:length(Rposition)

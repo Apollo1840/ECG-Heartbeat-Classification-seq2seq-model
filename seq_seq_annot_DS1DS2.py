@@ -5,12 +5,18 @@ from sklearn.preprocessing import MinMaxScaler
 import random
 import time
 import os
+import gc
 from datetime import datetime
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report
+from sklearn.metrics import f1_score
+
 import tensorflow as tf
 from imblearn.over_sampling import SMOTE
 from sklearn.model_selection import train_test_split
 import argparse
+
+import pickle
 
 from model import birnn
 
@@ -22,20 +28,20 @@ DATA_DIR = 'data/s2s_mitbih_aami_DS1DS2'
 def read_mitbih(filename,
                 max_time=100,
                 classes=['F', 'N', 'S', 'V', 'Q'],
-                max_nlabel=100,
+                max_nlabel=1000,
                 trainset=1):
     """
 
     :param filename:
     :param max_time: int, sequence length, or in other word, number of beats per training sample
     :param classes:
-    :param max_nlabel:
+    :param max_nlabel: int, upper bound of number of samples in each class
     :param trainset:
     :return:
     """
 
     # read data
-    data = []
+
     samples = spio.loadmat(filename + ".mat")
     if trainset == 1:  # DS1
         samples = samples['s2s_mitbih_DS1']
@@ -43,65 +49,53 @@ def read_mitbih(filename,
     else:  # DS2
         samples = samples['s2s_mitbih_DS2']
 
-    values = samples[0]['seg_values']
-    labels = samples[0]['seg_labels']
-    items_len = len(labels)
-    num_annots = sum([item.shape[0] for item in values])
+    values_mat = samples[0]['seg_values']  # dim: record, beat, unknown?(=0), amplitude, channel
+    labels_mat = samples[0]['seg_labels']  # dim: record, unknown?(=0), beat
 
-    n_seqs = num_annots // max_time
-    #  add all segments(beats) together
-    l_data = 0
-    for i, item in enumerate(values):
-        l = item.shape[0]
-        for itm in item:
-            if l_data == n_seqs * max_time:
-                break
-            data.append(itm[0])
-            l_data = l_data + 1
+    # let the data make more sense (remove unknow dimension)
+    values = [[beat[0] for beat in sig] for sig in values_mat]
+    labels = [sig_labels[0] for sig_labels in labels_mat]
 
-    #  add all labels together
-    l_lables = 0
-    t_lables = []
-    for i, item in enumerate(labels):
-        if len(t_lables) == n_seqs * max_time:
-            break
-        item = item[0]
-        for lebel in item:
-            if l_lables == n_seqs * max_time:
+    # start preprocess
+    num_beats = sum([len(record) for record in values])
+
+    # number of sequences
+    n_seqs = num_beats // max_time
+
+    #  add all segments(beats) together to the length of n_seqs * max_time (if label in classes)
+    data = []
+    t_labels = []
+    for r in range(len(values)):
+        assert len(values[r]) == len(labels[r])
+
+        for j in range(len(values[r])):
+            if len(data) == n_seqs * max_time:
                 break
-            t_lables.append(str(lebel))
-            l_lables = l_lables + 1
+            elif labels[r][j] in classes:
+                data.append(values[r][j])
+                t_labels.append(labels[r][j])
 
     del values
+    gc.collect()
 
     # ravel the data
-    data = np.asarray(data)
-    shape_v = data.shape
-    data = np.reshape(data, [shape_v[0], -1])
-    t_lables = np.array(t_lables)
+    data = np.reshape(data, [len(data), -1])
+    t_labels = np.array(t_labels)
 
-    _data = np.asarray([], dtype=np.float64).reshape(0, shape_v[1])
-    _labels = np.asarray([], dtype=np.dtype('|S1')).reshape(0, )
-    for cl in classes:
-        _label = np.where(t_lables == cl)
-        permute = np.random.permutation(len(_label[0]))
-        _label = _label[0][permute[:max_nlabel]]
-        # _label = _label[0][:max_nlabel]
-        # permute = np.random.permutation(len(_label))
-        # _label = _label[permute]
-        _data = np.concatenate((_data, data[_label]))
-        _labels = np.concatenate((_labels, t_lables[_label]))
+    # ERROR: here is the problem
+    _data, _labels = reorder_samples(data, t_labels, max_nlabel)
+    # Note: with max_nlabel, len(_data) maybe changed, so we need cut the data again to make sure mod(len) == 0
 
+    # cut the data
+    # data = _data
     data = _data[:(len(_data) // max_time) * max_time, :]
     _labels = _labels[:(len(_data) // max_time) * max_time]
-
-    # data = _data
 
     #  split data into sublist of 100=se_len values
     data = [data[i:i + max_time] for i in range(0, len(data), max_time)]
     labels = [_labels[i:i + max_time] for i in range(0, len(_labels), max_time)]
 
-    # shuffle
+    # shuffle the sub_signal (the segment)
     data = np.asarray(data)
     labels = np.asarray(labels)
 
@@ -112,6 +106,37 @@ def read_mitbih(filename,
     print('Records processed!')
 
     return data, labels
+
+
+def reorder_samples(x, y, upper_bound_nsamples_per_class=None):
+    """
+    # ERROR: so here is the logic error:
+    # Both in train and test set:
+    # _labels is a list like ["N", "N", ..., "N", "S", ... , "S", "V", .... "V"]
+    # in reality how do you reorder the beats when you do not know the label beforehand.
+
+    :param x: List[np.array]
+    :param y: List[str]
+    :param upper_bound_nsamples_per_class:
+    :return:
+    """
+
+    _data = np.asarray([], dtype=np.float64).reshape(0, x.shape[1])
+    _labels = np.asarray([], dtype=np.dtype('|S1')).reshape(0, )
+    for cls in np.unique(y):
+        indx_label = np.where(y == cls)[0]
+
+        if upper_bound_nsamples_per_class:
+            permute = np.random.permutation(len(indx_label))[:upper_bound_nsamples_per_class]
+        else:
+            permute = np.random.permutation(len(indx_label))
+
+        indx_label_permutated = indx_label[permute]
+
+        _data = np.concatenate((_data, x[indx_label_permutated]))
+        _labels = np.concatenate((_labels, y[indx_label_permutated]))
+
+    return _data, _labels
 
 
 def demonstrate_classes_distribution(y_train, y_test):
@@ -229,6 +254,8 @@ def test_model(X_test, y_test, batch_size, char2numY,
     # source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
     acc_track = []
     sum_test_conf = []
+    y_true = []
+    y_pred = []
     for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_test, y_test, batch_size)):
 
         dec_input = np.zeros((len(source_batch), 1)) + char2numY['<GO>']
@@ -239,9 +266,24 @@ def test_model(X_test, y_test, batch_size, char2numY,
             dec_input = np.hstack([dec_input, prediction[:, None]])
         # acc_track.append(np.mean(dec_input == target_batch))
         acc_track.append(dec_input[:, 1:] == target_batch[:, 1:])
-        y_true = target_batch[:, 1:].flatten()
-        y_pred = dec_input[:, 1:].flatten()
-        sum_test_conf.append(confusion_matrix(y_true, y_pred, labels=range(len(char2numY) - 1)))
+        y_true_batch = target_batch[:, 1:].flatten()
+        y_pred_batch = dec_input[:, 1:].flatten()
+
+        y_true.extend(y_true_batch)
+        y_pred.extend(y_pred_batch)
+
+        sum_test_conf.append(confusion_matrix(y_true_batch, y_pred_batch, labels=range(len(char2numY) - 1)))
+
+    with open("y_true.pkl", "wb") as f:
+        pickle.dump(y_true, f)
+    with open("y_pred.pkl", "wb") as f:
+        pickle.dump(y_pred, f)
+
+    print("macro f1 score", f1_score(y_true, y_pred, average='macro'))
+    print("micro f1 score", f1_score(y_true, y_pred, average='micro'))
+    print(classification_report(y_true, y_pred,
+                                labels=range(len(char2numY) - 1),
+                                target_names=list(classes) + ['<GO>']))
 
     sum_test_conf = np.mean(np.array(sum_test_conf, dtype=np.float32), axis=0)
 
@@ -320,7 +362,6 @@ def run_program(args):
 
     x_seq_length = len(X_train[0])
     y_seq_length = len(y_train[0]) - 1  # why minus one ?
-
 
     if n_oversampling:
         print("oversampling ...")
