@@ -29,7 +29,8 @@ def read_mitbih(filename,
                 max_time=100,
                 classes=['F', 'N', 'S', 'V', 'Q'],
                 max_nlabel=1000,
-                trainset=1):
+                trainset=1,
+                do_reorder_samples=True):
     """
 
     :param filename:
@@ -37,6 +38,7 @@ def read_mitbih(filename,
     :param classes:
     :param max_nlabel: int, upper bound of number of samples in each class
     :param trainset:
+    :param do_reorder_samples:
     :return:
     """
 
@@ -82,9 +84,12 @@ def read_mitbih(filename,
     data = np.reshape(data, [len(data), -1])
     t_labels = np.array(t_labels)
 
-    # ERROR: here is the problem
-    _data, _labels = reorder_samples(data, t_labels, max_nlabel)
-    # Note: with max_nlabel, len(_data) maybe changed, so we need cut the data again to make sure mod(len) == 0
+    if do_reorder_samples:
+        # ERROR: here is the problem
+        _data, _labels = reorder_samples(data, t_labels, max_nlabel)
+        # Note: with max_nlabel, len(_data) maybe changed, so we need cut the data again to make sure mod(len) == 0
+    else:
+        _data, _labels = data, t_labels
 
     # cut the data
     # data = _data
@@ -177,17 +182,9 @@ def oversampling(X_train, y_train, n_oversampling, char2numY):
     X_train = np.reshape(X_train, [X_train.shape[0] * X_train.shape[1], -1])
     y_train = y_train[:, 1:].flatten()  # removed <GO>
 
-    nums_in_classes = []
-    classes = np.unique(y_train)
-    for cl in classes:
-        ind = np.where(classes == cl)[0][0]
-        nums_in_classes.append(len(np.where(y_train.flatten() == ind)[0]))
+    sm = SMOTE(random_state=12,
+               sampling_strategy=purposed_class_ratio(y_train, n_oversampling))
 
-    # ratio={0:nums[0],1:nums[0],2:nums[0]}
-    # ratio={0:7000,1:nums[1],2:7000,3:7000}
-    ratio = {0: nums_in_classes[0], 1: n_oversampling + 1000, 2: n_oversampling}
-
-    sm = SMOTE(random_state=12, sampling_strategy=ratio)
     X_train, y_train = sm.fit_sample(X_train, y_train)
 
     X_train = X_train[:(X_train.shape[0] // max_time) * max_time, :]
@@ -199,6 +196,19 @@ def oversampling(X_train, y_train, n_oversampling, char2numY):
     y_train = np.array(y_train)
 
     return X_train, y_train
+
+
+def purposed_class_ratio(y, n_oversampling):
+    nums_in_classes = []
+    classes = np.unique(y)
+    for ind in range(len(classes)):
+        nums_in_classes.append(len(np.where(y.flatten() == ind)[0]))
+
+    # ratio={0:nums[0],1:nums[0],2:nums[0]}
+    # ratio={0:7000,1:nums[1],2:7000,3:7000}
+    ratio = {0: nums_in_classes[0], 1: n_oversampling + 1000, 2: n_oversampling}
+
+    return ratio
 
 
 def normalize(data):

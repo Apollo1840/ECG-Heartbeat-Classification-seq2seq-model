@@ -5,6 +5,10 @@ from sklearn.preprocessing import MinMaxScaler
 import random
 import time
 import os
+import pickle
+
+from sklearn.metrics import classification_report
+from sklearn.metrics import f1_score
 from datetime import datetime
 from sklearn.metrics import confusion_matrix
 import tensorflow as tf
@@ -30,7 +34,7 @@ def read_mitbih(filename, max_time=100, classes=['F', 'N', 'S', 'V', 'Q'], max_n
     labels = samples[0]['seg_labels']
     num_annots = sum([item.shape[0] for item in values])
 
-    n_seqs = num_annots / max_time
+    n_seqs = num_annots // max_time
     #  add all segments(beats) together
     l_data = 0
     for i, item in enumerate(values):
@@ -72,8 +76,8 @@ def read_mitbih(filename, max_time=100, classes=['F', 'N', 'S', 'V', 'Q'], max_n
         _data = np.concatenate((_data, data[_label]))
         _labels = np.concatenate((_labels, t_lables[_label]))
 
-    data = _data[:(len(_data) / max_time) * max_time, :]
-    _labels = _labels[:(len(_data) / max_time) * max_time]
+    data = _data[:(len(_data) // max_time) * max_time, :]
+    _labels = _labels[:(len(_data) // max_time) * max_time]
 
     # data = _data
     #  split data into sublist of 100=se_len values
@@ -134,7 +138,7 @@ def batch_data(x, y, batch_size):
 
 def build_network(inputs, dec_inputs, char2numY, n_channels=10, input_depth=280, num_units=128, max_time=10,
                   bidirectional=False):
-    _inputs = tf.reshape(inputs, [-1, n_channels, input_depth / n_channels])
+    _inputs = tf.reshape(inputs, [-1, n_channels, input_depth // n_channels])
     # _inputs = tf.reshape(inputs, [-1,input_depth,n_channels])
 
     # #(batch*max_time, 280, 1) --> (N, 280, 18)
@@ -217,7 +221,7 @@ def str2bool(v):
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--epochs', type=int, default=500)
+    parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--max_time', type=int, default=10)
     parser.add_argument('--test_steps', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=20)
@@ -302,7 +306,7 @@ def run_program(args):
         optimizer = tf.train.RMSPropOptimizer(1e-3).minimize(loss)
 
     # split the dataset into the training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
 
     # over-sampling: SMOTE
     X_train = np.reshape(X_train, [X_train.shape[0] * X_train.shape[1], -1])
@@ -314,11 +318,11 @@ def run_program(args):
         nums.append(len(np.where(y_train.flatten() == ind)[0]))
     # ratio={0:nums[3],1:nums[1],2:nums[3],3:nums[3]} # the best with 11000 for N
     ratio = {0: n_oversampling, 1: nums[1], 2: n_oversampling, 3: n_oversampling}
-    sm = SMOTE(random_state=12, ratio=ratio)
+    sm = SMOTE(random_state=12, sampling_strategy=ratio)
     X_train, y_train = sm.fit_sample(X_train, y_train)
 
-    X_train = X_train[:(X_train.shape[0] / max_time) * max_time, :]
-    y_train = y_train[:(X_train.shape[0] / max_time) * max_time]
+    X_train = X_train[:(X_train.shape[0] // max_time) * max_time, :]
+    y_train = y_train[:(X_train.shape[0] // max_time) * max_time]
 
     X_train = np.reshape(X_train, [-1, X_test.shape[1], X_test.shape[2]])
     y_train = np.reshape(y_train, [-1, y_test.shape[1] - 1, ])
@@ -353,6 +357,17 @@ def run_program(args):
             y_true = target_batch[:, 1:].flatten()
             y_pred = dec_input[:, 1:].flatten()
             sum_test_conf.append(confusion_matrix(y_true, y_pred, labels=range(len(char2numY) - 1)))
+
+        with open("y_true.pkl", "wb") as f:
+            pickle.dump(y_true, f)
+        with open("y_pred.pkl", "wb") as f:
+            pickle.dump(y_pred, f)
+
+        print("macro f1 score", f1_score(y_true, y_pred, average='macro'))
+        print("micro f1 score", f1_score(y_true, y_pred, average='micro'))
+        print(classification_report(y_true, y_pred,
+                                    labels=range(len(char2numY) - 1),
+                                    target_names=list(classes) + ['<GO>']))
 
         sum_test_conf = np.mean(np.array(sum_test_conf, dtype=np.float32), axis=0)
 

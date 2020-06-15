@@ -1,7 +1,13 @@
 import tensorflow as tf
 
 
-def birnn(inputs, dec_inputs, output_dim, n_channels=10, input_depth=280, num_units=128, max_time=10,
+def birnn(inputs,
+          dec_inputs,
+          output_dim,
+          n_channels=10,
+          input_depth=280,
+          num_units=128,
+          max_time=10,
           bidirectional=False):
 
     _inputs = tf.reshape(inputs, [-1, n_channels, input_depth // n_channels])
