@@ -1,16 +1,18 @@
 import numpy as np
 
 from keras.models import Model
-from keras.layers import Input, LSTM, Dense
+from keras.layers import Input, LSTM, Dense, Conv1D, TimeDistributed, Flatten
 
 
 class S2sModel:
 
     def __init__(self, **kwargs):
 
-        self.num_encoder_tokens = kwargs.get("num_decoder_tokens", -1)
+        self.num_encoder_tokens = kwargs.get("num_encoder_tokens", -1)
+
+        # add BOS, EOS, EMPTY
         self.num_decoder_tokens = kwargs.get("num_decoder_tokens", -1)
-        self.latent_dim = kwargs.get("num_decoder_tokens", -1)
+        self.latent_dim = kwargs.get("latent_dim", -1)
         self.model, self.encoder_model, self.decoder_model = seq2seq(self.num_encoder_tokens,
                                                                      self.num_decoder_tokens,
                                                                      self.latent_dim)
@@ -43,6 +45,7 @@ class S2sModel:
             # or find stop character.
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
             if (sampled_token_index == len(output_tokens[0, -1, :]) - 1 or
+                sampled_token_index == 0 or
                     len(output_tokens[0]) > max_decoder_seq_length):
                 stop_condition = True
 
@@ -55,7 +58,7 @@ class S2sModel:
 
         return output_tokens[0]
 
-    def fit(self, encoder_input_data, decoder_input_data, decoder_target_data, batch_size, epochs, **kwargs):
+    def fit(self, encoder_input_data, decoder_input_data, decoder_target_data, batch_size=32, epochs=12, **kwargs):
         """
 
         in the decoder_targe_data, each sequence must start with <BOS>, which is indicated by y[0] = 1.
@@ -85,7 +88,7 @@ class S2sModel:
         raise NotImplemented
 
 
-def seq2seq(num_encoder_tokens, num_decoder_tokens, latent_dim):
+def seq2seq(num_encoder_tokens, num_decoder_tokens, latent_dim, len_seq=10):
     """
 
     :param num_encoder_tokens: length of beat
@@ -95,8 +98,11 @@ def seq2seq(num_encoder_tokens, num_decoder_tokens, latent_dim):
     """
 
     # Define an input sequence and process it.
-    encoder_inputs = Input(shape=(None, num_encoder_tokens))
-    encoder_outputs, state_h, state_c = LSTM(latent_dim, return_state=True)(encoder_inputs)
+    img_inputs = Input(shape=(None, num_encoder_tokens, 1))
+
+    encoder_inputs = TimeDistributed(Conv1D(100, 3, activation="relu"))(img_inputs)
+    lstm_inputs = TimeDistributed(Flatten())(encoder_inputs)
+    encoder_outputs, state_h, state_c = LSTM(latent_dim, return_state=True)(lstm_inputs)
 
     # the channel between encoder and decoder.
     # the encoder output.
@@ -116,9 +122,9 @@ def seq2seq(num_encoder_tokens, num_decoder_tokens, latent_dim):
 
     # Define the model that will turn
     # `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
-    model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+    model = Model([img_inputs, decoder_inputs], decoder_outputs)
 
-    encoder_model = Model(encoder_inputs, encoder_states)
+    encoder_model = Model(img_inputs, encoder_states)
 
     decoder_state_input_h = Input(shape=(latent_dim,))
     decoder_state_input_c = Input(shape=(latent_dim,))

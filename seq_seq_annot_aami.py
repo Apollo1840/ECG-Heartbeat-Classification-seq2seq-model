@@ -6,6 +6,7 @@ import random
 import time
 import os
 import pickle
+import gc
 
 from sklearn.metrics import classification_report
 from sklearn.metrics import f1_score
@@ -19,80 +20,117 @@ import argparse
 random.seed(654)
 
 
-def read_mitbih(filename, max_time=100, classes=['F', 'N', 'S', 'V', 'Q'], max_nlabel=100):
-    def normalize(data):
-        data = np.nan_to_num(data)  # removing NaNs and Infs
-        data = data - np.mean(data)
-        data = data / np.std(data)
-        return data
+def read_mitbih(filename,
+                max_time=100,
+                classes=['F', 'N', 'S', 'V', 'Q'],
+                max_nlabel=1000,
+                do_reorder_samples=False):
+    """
+
+    :param filename:
+    :param max_time: int, sequence length, or in other word, number of beats per training sample
+    :param classes:
+    :param max_nlabel: int, upper bound of number of samples in each class
+    :param do_reorder_samples:
+    :return:
+    """
 
     # read data
-    data = []
+
     samples = spio.loadmat(filename + ".mat")
     samples = samples['s2s_mitbih']
-    values = samples[0]['seg_values']
-    labels = samples[0]['seg_labels']
-    num_annots = sum([item.shape[0] for item in values])
 
-    n_seqs = num_annots // max_time
-    #  add all segments(beats) together
-    l_data = 0
-    for i, item in enumerate(values):
-        l = item.shape[0]
-        for itm in item:
-            if l_data == n_seqs * max_time:
-                break
-            data.append(itm[0])
-            l_data = l_data + 1
+    values_mat = samples[0]['seg_values']  # dim: record, beat, unknown?(=0), amplitude, channel
+    labels_mat = samples[0]['seg_labels']  # dim: record, unknown?(=0), beat
 
-    #  add all labels together
-    l_lables = 0
-    t_lables = []
-    for i, item in enumerate(labels):
-        if len(t_lables) == n_seqs * max_time:
-            break
-        item = item[0]
-        for lebel in item:
-            if l_lables == n_seqs * max_time:
+    # let the data make more sense (remove unknow dimension)
+    values = [[beat[0] for beat in sig] for sig in values_mat]
+    labels = [sig_labels[0] for sig_labels in labels_mat]
+
+    # start preprocess
+    num_beats = sum([len(record) for record in values])
+
+    # number of sequences
+    n_seqs = num_beats // max_time
+
+    #  add all segments(beats) together to the length of n_seqs * max_time (if label in classes)
+    data = []
+    t_labels = []
+    for r in range(len(values)):
+        assert len(values[r]) == len(labels[r])
+
+        for j in range(len(values[r])):
+            if len(data) == n_seqs * max_time:
                 break
-            t_lables.append(str(lebel))
-            l_lables = l_lables + 1
+            elif labels[r][j] in classes:
+                data.append(values[r][j])
+                t_labels.append(labels[r][j])
 
     del values
-    data = np.asarray(data)
-    shape_v = data.shape
-    data = np.reshape(data, [shape_v[0], -1])
-    t_lables = np.array(t_lables)
-    _data = np.asarray([], dtype=np.float64).reshape(0, shape_v[1])
-    _labels = np.asarray([], dtype=np.dtype('|S1')).reshape(0, )
-    for cl in classes:
-        _label = np.where(t_lables == cl)
-        permute = np.random.permutation(len(_label[0]))
-        _label = _label[0][permute[:max_nlabel]]
+    gc.collect()
 
-        # _label = _label[0][:max_nlabel]
-        # permute = np.random.permutation(len(_label))
-        # _label = _label[permute]
-        _data = np.concatenate((_data, data[_label]))
-        _labels = np.concatenate((_labels, t_lables[_label]))
+    # ravel the data
+    data = np.reshape(data, [len(data), -1])
+    t_labels = np.array(t_labels)
 
+    if do_reorder_samples:
+        # ERROR: here is the problem
+        _data, _labels = reorder_samples(data, t_labels, max_nlabel)
+        # Note: with max_nlabel, len(_data) maybe changed, so we need cut the data again to make sure mod(len) == 0
+    else:
+        _data, _labels = data, t_labels
+
+    # cut the data
+    # data = _data
     data = _data[:(len(_data) // max_time) * max_time, :]
     _labels = _labels[:(len(_data) // max_time) * max_time]
 
-    # data = _data
     #  split data into sublist of 100=se_len values
     data = [data[i:i + max_time] for i in range(0, len(data), max_time)]
     labels = [_labels[i:i + max_time] for i in range(0, len(_labels), max_time)]
-    # shuffle
-    permute = np.random.permutation(len(labels))
+
+    # shuffle the sub_signal (the segment)
     data = np.asarray(data)
     labels = np.asarray(labels)
+
+    permute = np.random.permutation(len(labels))
     data = data[permute]
     labels = labels[permute]
 
     print('Records processed!')
 
     return data, labels
+
+
+def reorder_samples(x, y, upper_bound_nsamples_per_class=None):
+    """
+    # ERROR: so here is the logic error:
+    # Both in train and test set:
+    # _labels is a list like ["N", "N", ..., "N", "S", ... , "S", "V", .... "V"]
+    # in reality how do you reorder the beats when you do not know the label beforehand.
+
+    :param x: List[np.array]
+    :param y: List[str]
+    :param upper_bound_nsamples_per_class:
+    :return:
+    """
+
+    _data = np.asarray([], dtype=np.float64).reshape(0, x.shape[1])
+    _labels = np.asarray([], dtype=np.dtype('|S1')).reshape(0, )
+    for cls in np.unique(y):
+        indx_label = np.where(y == cls)[0]
+
+        if upper_bound_nsamples_per_class:
+            permute = np.random.permutation(len(indx_label))[:upper_bound_nsamples_per_class]
+        else:
+            permute = np.random.permutation(len(indx_label))
+
+        indx_label_permutated = indx_label[permute]
+
+        _data = np.concatenate((_data, x[indx_label_permutated]))
+        _labels = np.concatenate((_labels, y[indx_label_permutated]))
+
+    return _data, _labels
 
 
 def evaluate_metrics(confusion_matrix):
@@ -218,26 +256,6 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-def main():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--epochs', type=int, default=30)
-    parser.add_argument('--max_time', type=int, default=10)
-    parser.add_argument('--test_steps', type=int, default=10)
-    parser.add_argument('--batch_size', type=int, default=20)
-    parser.add_argument('--data_dir', type=str, default='data/s2s_mitbih_aami')
-    parser.add_argument('--bidirectional', type=str2bool, default=str2bool('False'))
-    # parser.add_argument('--lstm_layers', type=int, default=2)
-    parser.add_argument('--num_units', type=int, default=128)
-    parser.add_argument('--n_oversampling', type=int, default=10000)
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints-seq2seq')
-    parser.add_argument('--ckpt_name', type=str, default='seq2seq_mitbih.ckpt')
-    parser.add_argument('--classes', nargs='+', type=chr,
-                        default=['F', 'N', 'S', 'V'])
-    args = parser.parse_args()
-    run_program(args)
-
-
 def run_program(args):
     print(args)
     max_time = args.max_time  # 5 3 second best 10# 40 # 100
@@ -306,7 +324,8 @@ def run_program(args):
         optimizer = tf.train.RMSPropOptimizer(1e-3).minimize(loss)
 
     # split the dataset into the training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
+    Y_in_num = [np.argmax(y) for y in Y]
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=42, stratify=Y_in_num)
 
     # over-sampling: SMOTE
     X_train = np.reshape(X_train, [X_train.shape[0] * X_train.shape[1], -1])
@@ -336,6 +355,10 @@ def run_program(args):
     print("------------------y_train samples--------------------")
     for ii in range(2):
         print(''.join([num2charY[y_] for y_ in list(y_train[ii + 5])]))
+    print('Classes in the test set: ', classes)
+    for cl in classes:
+        ind = np.where(classes == cl)[0][0]
+        print(cl, len(np.where(y_test.flatten() == ind)[0]))
     print("------------------y_test samples--------------------")
     for ii in range(2):
         print(''.join([num2charY[y_] for y_ in list(y_test[ii + 5])]))
@@ -344,6 +367,8 @@ def run_program(args):
         # source_batch, target_batch = next(batch_data(X_test, y_test, batch_size))
         acc_track = []
         sum_test_conf = []
+        y_true = []
+        y_pred = []
         for batch_i, (source_batch, target_batch) in enumerate(batch_data(X_test, y_test, batch_size)):
 
             dec_input = np.zeros((len(source_batch), 1)) + char2numY['<GO>']
@@ -354,13 +379,16 @@ def run_program(args):
                 dec_input = np.hstack([dec_input, prediction[:, None]])
             # acc_track.append(np.mean(dec_input == target_batch))
             acc_track.append(dec_input[:, 1:] == target_batch[:, 1:])
-            y_true = target_batch[:, 1:].flatten()
-            y_pred = dec_input[:, 1:].flatten()
-            sum_test_conf.append(confusion_matrix(y_true, y_pred, labels=range(len(char2numY) - 1)))
+            y_true_batch = target_batch[:, 1:].flatten()
+            y_pred_batch = dec_input[:, 1:].flatten()
 
-        with open("y_true.pkl", "wb") as f:
+            y_true.extend(y_true_batch)
+            y_pred.extend(y_pred_batch)
+            sum_test_conf.append(confusion_matrix(y_true_batch, y_pred_batch, labels=range(len(char2numY) - 1)))
+
+        with open("y_true_aami.pkl", "wb") as f:
             pickle.dump(y_true, f)
-        with open("y_pred.pkl", "wb") as f:
+        with open("y_pred.aami.pkl", "wb") as f:
             pickle.dump(y_pred, f)
 
         print("macro f1 score", f1_score(y_true, y_pred, average='macro'))
@@ -460,10 +488,30 @@ def run_program(args):
                     #     saver.save(sess, save_path)
                     #     print("The best model (till now) saved in path: %s" % save_path)
 
-            plt.plot(loss_track)
-            plt.show()
+            # plt.plot(loss_track)
+            # plt.show()
         print(str(datetime.now()))
         # test_model()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--max_time', type=int, default=10)
+    parser.add_argument('--test_steps', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=20)
+    parser.add_argument('--data_dir', type=str, default='data/s2s_mitbih_aami')
+    parser.add_argument('--bidirectional', type=str2bool, default=str2bool('False'))
+    # parser.add_argument('--lstm_layers', type=int, default=2)
+    parser.add_argument('--num_units', type=int, default=128)
+    parser.add_argument('--n_oversampling', type=int, default=10000)
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints-seq2seq_true')
+    parser.add_argument('--ckpt_name', type=str, default='seq2seq_mitbih.ckpt')
+    parser.add_argument('--classes', nargs='+', type=chr,
+                        default=['F', 'N', 'S', 'V'])
+    args = parser.parse_args()
+    run_program(args)
 
 
 if __name__ == '__main__':

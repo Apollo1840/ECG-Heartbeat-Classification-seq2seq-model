@@ -103,19 +103,22 @@ def all_markers(ecg, r_peaks, fs, remove_invalid=True):
         fid_pks[i, :] = [0, qrs_start, q, r, s, qrs_end, 0]
 
     for i in range(1, len(r_peaks) - 1):
-        this_on = fid_pks[i, 1]  # this qrs_start
-        next_on = fid_pks[i + 1, 1]  # next qrs_start
-        last_off = fid_pks[i - 1, 5]  # last qrs_end
-        this_off = fid_pks[i, 5]  # this qrs_end
 
-        if last_off < this_on and this_off < next_on:
-            search_last = round((1 / 3) * (this_on - last_off))
+        # last_qrs_off ..<search>.. this_qrs_on ... this_qrs_off ..<search>.. next_qrs_on
+
+        this_qrs_on = fid_pks[i, 1]  # this qrs_start
+        next_qrs_on = fid_pks[i + 1, 1]  # next qrs_start
+        last_qrs_off = fid_pks[i - 1, 5]  # last qrs_end
+        this_qrs_off = fid_pks[i, 5]  # this qrs_end
+
+        if last_qrs_off < this_qrs_on and this_qrs_off < next_qrs_on:
+            search_last = round((1 / 3) * (this_qrs_on - last_qrs_off))
             # p
-            fid_pks[i, 0] = (this_on - search_last) + max(ecg[(this_on - search_last): this_on])
+            fid_pks[i, 0] = (this_qrs_on - search_last) + np.argmax(ecg[(this_qrs_on - search_last): this_qrs_on])
 
-            search_next = round((2 / 3) * (next_on - this_off))
+            search_next = round((2 / 3) * (next_qrs_on - this_qrs_off))
             # t
-            fid_pks[i, 6] = this_off + max(ecg[this_off: this_off + search_next])
+            fid_pks[i, 6] = this_qrs_off + np.argmax(ecg[this_qrs_off: this_qrs_off + search_next])
 
     if remove_invalid:
         # validate the data, make sure no zero exists
@@ -168,7 +171,8 @@ def record2beats(record_id):
             # this is probabily wrong
             original_beat = sig_normalized[:min(sig_freq, peaks[j, -1])]
         else:
-            original_beat = sig_normalized[peaks[j - 1, -1]:peaks[j, -1]]
+            index_t_peak = -1
+            original_beat = sig_normalized[peaks[j - 1, index_t_peak]:peaks[j, index_t_peak]]
 
         seg_values.append(signal.resample(original_beat, beat_len))
         seg_labels.append(annot[j])
