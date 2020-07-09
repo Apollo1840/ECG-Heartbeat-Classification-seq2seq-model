@@ -167,15 +167,32 @@ def demonstrate_sample(y_train, y_test, num2charY):
         print(''.join([num2charY[y_] for y_ in list(y_test[ii + 5])]))
 
 
-def numerize_y(y_train, y_test, char2numY):
-    y_train = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_train]
-    y_test = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_test]
+def numerize_y(y_train, y_test, char2numY, add_go=True):
+    """
+    add <GO>
+
+    :param y_train:
+    :param y_test:
+    :param char2numY:
+    :return:
+    """
+
+    if add_go:
+        y_train = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_train]
+        y_test = [[char2numY['<GO>']] + [char2numY[y_] for y_ in date] for date in y_test]
+    else:
+        y_train = [[char2numY[y_] for y_ in date] for date in y_train]
+        y_test = [[char2numY[y_] for y_ in date] for date in y_test]
+
     y_test = np.asarray(y_test)
     y_train = np.asarray(y_train)
     return y_train, y_test
 
 
 def oversampling(X_train, y_train, n_oversampling, char2numY):
+    print(X_train.shape)  # num_seq, num_beat_in_seq, num_sample_in_beat
+    print(y_train.shape)  # num_seq, num_beat_in_seq
+
     max_time = X_train.shape[1]
     input_dim = X_train.shape[2]
 
@@ -352,6 +369,12 @@ def run_program(args):
     X_train, y_train = read_mitbih(filename, max_time, classes=classes, max_nlabel=50000, trainset=1)
     X_test, y_test = read_mitbih(filename, max_time, classes=classes, max_nlabel=50000, trainset=0)
 
+    with open("x_test_ds1ds2.pkl", "wb") as f:
+        pickle.dump(X_test, f)
+
+    with open("y_test_ds1ds2.pkl", "wb") as f:
+        pickle.dump(y_test, f)
+
     # input_dim
     input_depth = X_train.shape[2]
     n_channels = 10
@@ -373,9 +396,24 @@ def run_program(args):
     x_seq_length = len(X_train[0])
     y_seq_length = len(y_train[0]) - 1  # why minus one ?
 
+    with open("x_train_ds1ds2.pkl", "wb") as f:
+        pickle.dump(X_train, f)
+
+    with open("y_train_ds1ds2.pkl", "wb") as f:
+        pickle.dump(y_train, f)
+
     if n_oversampling:
         print("oversampling ...")
         X_train, y_train = oversampling(X_train, y_train, n_oversampling, char2numY)
+
+    print(X_train.shape)
+    print(y_train.shape)
+
+    with open("x_train_ds1ds2_oversample.pkl", "wb") as f:
+        pickle.dump(X_train, f)
+
+    with open("y_train_ds1ds2_oversample.pkl", "wb") as f:
+        pickle.dump(y_train, f)
 
     demonstrate_classes_distribution(y_train, y_test)
     demonstrate_sample(y_train, y_test, num2charY)
